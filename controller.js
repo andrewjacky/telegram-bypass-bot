@@ -64,6 +64,7 @@ db.run(`CREATE TABLE IF NOT EXISTS attacks (
 // ========== HEALTH CHECK SERVER FOR RAILWAY ==========
 const app = express();
 const port = process.env.PORT || 3000;
+const HOST = '::';  // CRITICAL: Bind to IPv6 for Railway
 
 // Helper function to count running attacks (defined here so health check can use it)
 function countRunningAttacks() {
@@ -74,7 +75,7 @@ function countRunningAttacks() {
     return count;
 }
 
-// Basic health check endpoint
+// Basic health check endpoint (Railway checks this by default)
 app.get('/', (req, res) => {
     res.status(200).send(`
         <html>
@@ -90,7 +91,7 @@ app.get('/', (req, res) => {
     `);
 });
 
-// Detailed health check endpoint
+// Detailed health check endpoint (must be FAST!)
 app.get('/health', (req, res) => {
     const memory = process.memoryUsage();
     const running = countRunningAttacks();
@@ -128,10 +129,16 @@ app.get('/health', (req, res) => {
     });
 });
 
-// Start the health check server
-app.listen(port, '0.0.0.0', () => {
+// CRITICAL: Bind to '::' for IPv6 support (required for Railway)
+const server = app.listen(port, HOST, () => {
     console.log(`🌐 Health check server running on port ${port}`);
-    console.log(`📊 Health endpoint: http://localhost:${port}/health`);
+    console.log(`🔧 Bound to host: ${HOST} (IPv6)`);
+    console.log(`📊 Endpoints: / and /health`);
+});
+
+// Handle any server errors
+server.on('error', (err) => {
+    console.error('❌ Server error:', err);
 });
 // ========== END HEALTH CHECK SERVER ==========
 
