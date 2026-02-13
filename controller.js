@@ -7,6 +7,7 @@ import { dirname } from 'path';
 import sqlite3 from 'sqlite3';
 import { createCanvas } from 'canvas';
 import cron from 'node-cron';
+import express from 'express';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -60,6 +61,80 @@ db.run(`CREATE TABLE IF NOT EXISTS attacks (
     username TEXT
 )`);
 
+// ========== HEALTH CHECK SERVER FOR RAILWAY ==========
+const app = express();
+const port = process.env.PORT || 3000;
+
+// Helper function to count running attacks (defined here so health check can use it)
+function countRunningAttacks() {
+    let count = 0;
+    for (const attack of attacks.values()) {
+        if (attack.isRunning) count++;
+    }
+    return count;
+}
+
+// Basic health check endpoint
+app.get('/', (req, res) => {
+    res.status(200).send(`
+        <html>
+            <head><title>Telegram Bypass Bot</title></head>
+            <body style="font-family: Arial; text-align: center; padding: 50px;">
+                <h1>🤖 Telegram Bypass Bot</h1>
+                <p>Status: <span style="color: green; font-weight: bold;">RUNNING</span></p>
+                <p>Active Attacks: ${attacks.size}</p>
+                <p>Uptime: ${Math.floor(process.uptime() / 60)} minutes</p>
+                <p><a href="/health">View Health Details</a></p>
+            </body>
+        </html>
+    `);
+});
+
+// Detailed health check endpoint
+app.get('/health', (req, res) => {
+    const memory = process.memoryUsage();
+    const running = countRunningAttacks();
+    
+    res.status(200).json({
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        uptime_formatted: `${Math.floor(process.uptime() / 3600)}h ${Math.floor((process.uptime() % 3600) / 60)}m ${Math.floor(process.uptime() % 60)}s`,
+        bot: {
+            username: '@DDOSATTACK67_BOT',
+            admin_id: ADMIN_ID,
+            attacks: {
+                total: attacks.size,
+                running: running,
+                config_limit: CONFIG.MAX_CONCURRENT_ATTACKS
+            },
+            templates: templates.size,
+            scheduled: schedule.size
+        },
+        system: {
+            memory: {
+                rss: `${Math.round(memory.rss / 1024 / 1024)} MB`,
+                heap_used: `${Math.round(memory.heapUsed / 1024 / 1024)} MB`,
+                heap_total: `${Math.round(memory.heapTotal / 1024 / 1024)} MB`
+            },
+            node_version: process.version,
+            platform: process.platform
+        },
+        files: {
+            bypass_cjs: fs.existsSync('bypass.cjs'),
+            proxy_txt: fs.existsSync('proxy.txt'),
+            database: fs.existsSync('attacks.db')
+        }
+    });
+});
+
+// Start the health check server
+app.listen(port, '0.0.0.0', () => {
+    console.log(`🌐 Health check server running on port ${port}`);
+    console.log(`📊 Health endpoint: http://localhost:${port}/health`);
+});
+// ========== END HEALTH CHECK SERVER ==========
+
 // Clean up old data
 setInterval(() => {
     const now = Date.now();
@@ -112,15 +187,6 @@ function loadAndCleanProxies() {
     } catch (error) {
         return [];
     }
-}
-
-// Count running attacks
-function countRunningAttacks() {
-    let count = 0;
-    for (const attack of attacks.values()) {
-        if (attack.isRunning) count++;
-    }
-    return count;
 }
 
 // Format numbers with commas
@@ -1502,26 +1568,36 @@ cron.schedule('0 3 * * *', () => {
     console.log('🧹 Cleaned up old database entries');
 });
 
-// Start bot
-bot.launch()
-    .then(() => {
-        console.log('\n╔════════════════════════════════════╗');
-        console.log('║    🔥 ULTIMATE BYPASS CONTROLLER   ║');
-        console.log('╠════════════════════════════════════╣');
-        console.log(`║  👑 Admin: ${ADMIN_ID}                 ║`);
-        console.log(`║  🤖 Bot: @DDOSATTACK67_BOT          ║`);
-        console.log(`║  ✨ Features: 20+ loaded             ║`);
-        console.log('╚════════════════════════════════════╝');
-        
-        const proxyCount = loadAndCleanProxies().length;
-        console.log(`📊 Loaded ${proxyCount} proxies`);
-        console.log(`📋 Loaded ${templates.size} templates`);
-        console.log(`📚 Database: attacks.db`);
-        console.log('✅ Bot is online! Send /start on Telegram\n');
-    })
-    .catch((err) => {
-        console.error('❌ Failed to start bot:', err);
-    });
+// Start bot (use webhook for Railway)
+const webhookUrl = process.env.RAILWAY_STATIC_URL || `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+if (webhookUrl) {
+    bot.telegram.setWebhook(`${webhookUrl}/webhook`)
+        .then(() => console.log('✅ Webhook set to:', `${webhookUrl}/webhook`));
+} else {
+    console.log('⚠️ No webhook URL, falling back to polling');
+    bot.launch();
+}
+
+// Add webhook endpoint
+app.post('/webhook', (req, res) => {
+    bot.handleUpdate(req.body);
+    res.sendStatus(200);
+});
+
+console.log('\n╔════════════════════════════════════╗');
+console.log('║    🔥 ULTIMATE BYPASS CONTROLLER   ║');
+console.log('╠════════════════════════════════════╣');
+console.log(`║  👑 Admin: ${ADMIN_ID}                 ║`);
+console.log(`║  🤖 Bot: @DDOSATTACK67_BOT          ║`);
+console.log(`║  🌐 Webhook: ${webhookUrl ? '✅' : '❌'}                      ║`);
+console.log(`║  ✨ Features: 20+ loaded             ║`);
+console.log('╚════════════════════════════════════╝');
+
+const proxyCount = loadAndCleanProxies().length;
+console.log(`📊 Loaded ${proxyCount} proxies`);
+console.log(`📋 Loaded ${templates.size} templates`);
+console.log(`📚 Database: attacks.db`);
+console.log('✅ Bot is online! Send /start on Telegram\n');
 
 // Graceful shutdown
 process.once('SIGINT', () => {
